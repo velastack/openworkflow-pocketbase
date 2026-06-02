@@ -1,14 +1,6 @@
 # openworkflow-pocketbase
 
-An [OpenWorkflow](https://openworkflow.dev) `Backend` implementation that talks to a
-[PocketBase](https://github.com/velastack/velabase) `/api/ow/v1/{namespace}` HTTP API. With
-it, an **unmodified** OpenWorkflow `Worker` + replay engine runs against a central velabase
-(PocketBase) instead of an in-process SQLite/Postgres backend.
-
-It is a thin wrapper: a superuser-authed [`pocketbase`](https://github.com/pocketbase/js-sdk)
-client is effectively "the DB connection", and each `Backend` method is one `pb.send()`
-against the matching endpoint. It uses only the standard PocketBase JS SDK API, so it works
-with the official `pocketbase` package (or any drop-in fork of it).
+An [OpenWorkflow](https://openworkflow.dev) backend implementation for [PocketBase](https://github.com/pocketbase/pocketbase).
 
 ## Install
 
