@@ -1,0 +1,45 @@
+name: conformance
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    env:
+      # Pin to a published pocketbase release that includes the openworkflow
+      # plugin AND the /api/ow/v1 error-message pass-through fix (schema v5).
+      # Update when bumping the supported pocketbase version.
+      POCKETBASE_VERSION: v0.0.0
+      PB_URL: http://127.0.0.1:8090
+      PB_SUPERUSER_EMAIL: test@example.com
+      PB_SUPERUSER_PASSWORD: openworkflow-test-pw
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Download pocketbase release binary
+        run: |
+          ver="${POCKETBASE_VERSION#v}"
+          curl -fL -o pocketbase.zip \
+            "https://github.com/velastack/velabase/releases/download/${POCKETBASE_VERSION}/pocketbase_${ver}_linux_amd64.zip"
+          unzip -o pocketbase.zip pocketbase
+          chmod +x pocketbase
+
+      - name: Seed superuser and serve pocketbase
+        run: |
+          ./pocketbase superuser upsert "$PB_SUPERUSER_EMAIL" "$PB_SUPERUSER_PASSWORD" --dir ./pb_data
+          ./pocketbase serve --dir ./pb_data --http 127.0.0.1:8090 &
+          for i in $(seq 1 30); do
+            curl -sf "$PB_URL/api/health" >/dev/null && { echo "pocketbase healthy"; break; }
+            sleep 1
+          done
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
