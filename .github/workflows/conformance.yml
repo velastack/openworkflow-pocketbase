@@ -11,7 +11,7 @@ jobs:
       # Pin to a published pocketbase release that includes the openworkflow
       # plugin AND the /api/ow/v1 error-message pass-through fix (schema v5).
       # Update when bumping the supported pocketbase version.
-      POCKETBASE_VERSION: v0.0.0
+      POCKETBASE_VERSION: v0.39.1
       PB_URL: http://127.0.0.1:8090
       PB_SUPERUSER_EMAIL: test@example.com
       PB_SUPERUSER_PASSWORD: openworkflow-test-pw
