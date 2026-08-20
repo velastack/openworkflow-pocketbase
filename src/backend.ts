@@ -358,15 +358,24 @@ export class BackendPocketBase implements Backend {
   }
 }
 
-/** Build the cursor-pagination query (limit/after/before), omitting absent keys. */
+/**
+ * Build the cursor-pagination query (limit/after/before), omitting absent keys.
+ * `status`/`workflowName` are the optional `listWorkflowRuns` filters (added in
+ * openworkflow 0.9.1, #518); they are absent on `listStepAttempts` params and so
+ * omitted there.
+ */
 function listQuery(params: {
   limit?: number;
   after?: string;
   before?: string;
+  status?: string;
+  workflowName?: string;
 }): Record<string, unknown> {
   const q: Record<string, unknown> = {};
   if (params.limit != null) q.limit = params.limit;
   if (params.after != null) q.after = params.after;
   if (params.before != null) q.before = params.before;
+  if (params.status != null) q.status = params.status;
+  if (params.workflowName != null) q.workflowName = params.workflowName;
   return q;
 }

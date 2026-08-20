@@ -354,10 +354,6 @@ export function testBackend(options: TestBackendOptions): void {
         await teardown(backend);
       });
 
-      // SKIPPED in the velabase HTTP binding: this test mocks the in-process
-      // clock (vi.spyOn(Date,"now")) to jump past the idempotency window, which
-      // cannot affect the remote Go server's clock. (All other timing tests use
-      // real sleep() and run live.)
       test.skip("creates a new run when matching key is older than the idempotency period", async () => {
         const backend = await setup();
         const workflowName = randomUUID();
@@ -722,6 +718,214 @@ export function testBackend(options: TestBackendOptions): void {
 
         await teardown(backend);
       });
+
+      test("filters workflow runs by status", async () => {
+        const backend = await setup();
+
+        // Drive runs to completed/failed first; while no other pending runs
+        // exist, `createClaimedWorkflowRun` claims the run it just created.
+        const completedRun = await createClaimedWorkflowRun(backend);
+        const completedWorkerId = completedRun.workerId;
+        if (!completedWorkerId) throw new Error("Expected workerId");
+        await backend.completeWorkflowRun({
+          workflowRunId: completedRun.id,
+          workerId: completedWorkerId,
+          output: null,
+        });
+
+        const failedRun = await createClaimedWorkflowRun(backend);
+        const failedWorkerId = failedRun.workerId;
+        if (!failedWorkerId) throw new Error("Expected workerId");
+        await backend.failWorkflowRun({
+          workflowRunId: failedRun.id,
+          workerId: failedWorkerId,
+          error: { message: "failed run" },
+          retryPolicy: {
+            ...DEFAULT_WORKFLOW_RETRY_POLICY,
+            maximumAttempts: 1,
+          },
+        });
+
+        // Add the pending run last so nothing else can claim it.
+        const pendingRun = await createPendingWorkflowRun(backend);
+
+        const pendingList = await backend.listWorkflowRuns({
+          status: "pending",
+        });
+        expect(pendingList.data.map((r: WorkflowRun) => r.id)).toEqual([
+          pendingRun.id,
+        ]);
+
+        const completedList = await backend.listWorkflowRuns({
+          status: "completed",
+        });
+        expect(completedList.data.map((r: WorkflowRun) => r.id)).toEqual([
+          completedRun.id,
+        ]);
+
+        const failedList = await backend.listWorkflowRuns({
+          status: "failed",
+        });
+        expect(failedList.data.map((r: WorkflowRun) => r.id)).toEqual([
+          failedRun.id,
+        ]);
+
+        const canceledList = await backend.listWorkflowRuns({
+          status: "canceled",
+        });
+        expect(canceledList.data).toHaveLength(0);
+
+        await teardown(backend);
+      });
+
+      test("paginates workflow runs with a status filter", async () => {
+        const backend = await setup();
+
+        const failedRuns: WorkflowRun[] = [];
+        for (let i = 0; i < 3; i++) {
+          const claimed = await createClaimedWorkflowRun(backend);
+          const workerId = claimed.workerId;
+          if (!workerId) throw new Error("Expected workerId");
+          const failed = await backend.failWorkflowRun({
+            workflowRunId: claimed.id,
+            workerId,
+            error: { message: "failed run" },
+            retryPolicy: {
+              ...DEFAULT_WORKFLOW_RETRY_POLICY,
+              maximumAttempts: 1,
+            },
+          });
+          failedRuns.push(failed);
+          await sleep(10); // ensure timestamp difference
+        }
+
+        await createPendingWorkflowRun(backend);
+        await sleep(10);
+        await createPendingWorkflowRun(backend);
+
+        const page1 = await backend.listWorkflowRuns({
+          status: "failed",
+          limit: 2,
+        });
+        expect(page1.data).toHaveLength(2);
+        expect(page1.data[0]?.id).toBe(failedRuns[2]?.id);
+        expect(page1.data[1]?.id).toBe(failedRuns[1]?.id);
+        expect(page1.pagination.next).not.toBeNull();
+
+        const page2 = await backend.listWorkflowRuns({
+          status: "failed",
+          limit: 2,
+          after: page1.pagination.next!, // eslint-disable-line @typescript-eslint/no-non-null-assertion
+        });
+        expect(page2.data).toHaveLength(1);
+        expect(page2.data[0]?.id).toBe(failedRuns[0]?.id);
+        expect(page2.pagination.next).toBeNull();
+
+        await teardown(backend);
+      });
+
+      test("filters workflow runs by workflow name", async () => {
+        const backend = await setup();
+
+        const orderProcessor = await backend.createWorkflowRun({
+          workflowName: "order-processor",
+          version: null,
+          idempotencyKey: null,
+          input: null,
+          config: {},
+          context: null,
+          parentStepAttemptNamespaceId: null,
+          parentStepAttemptId: null,
+          availableAt: null,
+          deadlineAt: null,
+        });
+
+        await backend.createWorkflowRun({
+          workflowName: "email-sender",
+          version: null,
+          idempotencyKey: null,
+          input: null,
+          config: {},
+          context: null,
+          parentStepAttemptNamespaceId: null,
+          parentStepAttemptId: null,
+          availableAt: null,
+          deadlineAt: null,
+        });
+
+        const filtered = await backend.listWorkflowRuns({
+          workflowName: "order-processor",
+        });
+        expect(filtered.data.map((r: WorkflowRun) => r.id)).toEqual([
+          orderProcessor.id,
+        ]);
+
+        const missing = await backend.listWorkflowRuns({
+          workflowName: "no-such-workflow",
+        });
+        expect(missing.data).toHaveLength(0);
+
+        await teardown(backend);
+      });
+
+      test("combines status and workflow name filters", async () => {
+        const backend = await setup();
+
+        // Failed run with a different name — should NOT match the name filter.
+        await backend.createWorkflowRun({
+          workflowName: "email-sender",
+          version: null,
+          idempotencyKey: null,
+          input: null,
+          config: {},
+          context: null,
+          parentStepAttemptNamespaceId: null,
+          parentStepAttemptId: null,
+          availableAt: null,
+          deadlineAt: null,
+        });
+        await claimAndFailNextPendingRun(backend);
+
+        // Failed run with target name — the only run that matches both filters.
+        const target = await backend.createWorkflowRun({
+          workflowName: "order-processor",
+          version: null,
+          idempotencyKey: null,
+          input: null,
+          config: {},
+          context: null,
+          parentStepAttemptNamespaceId: null,
+          parentStepAttemptId: null,
+          availableAt: null,
+          deadlineAt: null,
+        });
+        const failedTargetId = await claimAndFailNextPendingRun(backend);
+        expect(failedTargetId).toBe(target.id);
+
+        // Pending run with target name — should NOT match the "failed" filter.
+        await backend.createWorkflowRun({
+          workflowName: "order-processor",
+          version: null,
+          idempotencyKey: null,
+          input: null,
+          config: {},
+          context: null,
+          parentStepAttemptNamespaceId: null,
+          parentStepAttemptId: null,
+          availableAt: null,
+          deadlineAt: null,
+        });
+
+        const filtered = await backend.listWorkflowRuns({
+          status: "failed",
+          workflowName: "order-processor",
+        });
+        expect(filtered.data.map((r: WorkflowRun) => r.id)).toEqual([
+          target.id,
+        ]);
+
+        await teardown(backend);
+      });
     });
 
     describe("countWorkflowRuns()", () => {
@@ -836,14 +1040,14 @@ export function testBackend(options: TestBackendOptions): void {
       test("claims workflow runs and respects leases, reclaiming if lease expires", async () => {
         const backend = await setup();
 
-        await createPendingWorkflowRun(backend);
+        const blockedRun = await createPendingWorkflowRun(backend);
 
-        const firstLeaseMs = 30;
         const firstWorker = randomUUID();
         const claimed = await backend.claimWorkflowRun({
           workerId: firstWorker,
-          leaseDurationMs: firstLeaseMs,
+          leaseDurationMs: 60_000,
         });
+        expect(claimed?.id).toBe(blockedRun.id);
         expect(claimed?.status).toBe("running");
         expect(claimed?.workerId).toBe(firstWorker);
         expect(claimed?.attempts).toBe(1);
@@ -856,17 +1060,31 @@ export function testBackend(options: TestBackendOptions): void {
         });
         expect(blocked).toBeNull();
 
-        await sleep(firstLeaseMs + 5); // small buffer for timing variability
+        await backend.completeWorkflowRun({
+          workflowRunId: blockedRun.id,
+          workerId: firstWorker,
+          output: null,
+        });
+
+        const expiringRun = await createPendingWorkflowRun(backend);
+        const expiringClaim = await backend.claimWorkflowRun({
+          workerId: firstWorker,
+          leaseDurationMs: 50,
+        });
+        expect(expiringClaim?.id).toBe(expiringRun.id);
+        expect(expiringClaim?.availableAt).not.toBeNull();
+
+        await sleepUntilAfter(expiringClaim?.availableAt);
 
         const reclaimed = await backend.claimWorkflowRun({
           workerId: secondWorker,
           leaseDurationMs: 10,
         });
-        expect(reclaimed?.id).toBe(claimed?.id);
+        expect(reclaimed?.id).toBe(expiringRun.id);
         expect(reclaimed?.attempts).toBe(2);
         expect(reclaimed?.workerId).toBe(secondWorker);
         expect(reclaimed?.startedAt?.getTime()).toBe(
-          claimed?.startedAt?.getTime(),
+          expiringClaim?.startedAt?.getTime(),
         );
 
         await teardown(backend);
@@ -878,12 +1096,12 @@ export function testBackend(options: TestBackendOptions): void {
         const running = await createPendingWorkflowRun(backend);
         const runningClaim = await backend.claimWorkflowRun({
           workerId: "worker-running",
-          leaseDurationMs: 5,
+          leaseDurationMs: 50,
         });
         if (!runningClaim) throw new Error("expected claim");
         expect(runningClaim.id).toBe(running.id);
 
-        await sleep(10); // wait for running's lease to expire
+        await sleepUntilAfter(runningClaim.availableAt);
 
         // pending claimed first, even though running expired
         const pending = await createPendingWorkflowRun(backend);
@@ -1489,6 +1707,54 @@ export function testBackend(options: TestBackendOptions): void {
         expected.updatedAt = created.updatedAt;
         expect(created).toEqual(expected);
       });
+
+      test("fails when the worker does not own the workflow run", async () => {
+        const workflowRun = await createClaimedWorkflowRun(backend);
+
+        await expect(
+          backend.createStepAttempt({
+            workflowRunId: workflowRun.id,
+            workerId: randomUUID(),
+            stepName: randomUUID(),
+            kind: "function",
+            config: {},
+            context: null,
+          }),
+        ).rejects.toThrow("Failed to create step attempt");
+
+        const attempts = await backend.listStepAttempts({
+          workflowRunId: workflowRun.id,
+        });
+        expect(attempts.data).toHaveLength(0);
+      });
+
+      test("fails after the workflow run has been parked", async () => {
+        const workflowRun = await createClaimedWorkflowRun(backend);
+        const workerId = workflowRun.workerId;
+        if (!workerId) throw new Error("Expected claimed workflow worker ID");
+
+        await backend.sleepWorkflowRun({
+          workflowRunId: workflowRun.id,
+          workerId,
+          availableAt: newDateInOneYear(),
+        });
+
+        await expect(
+          backend.createStepAttempt({
+            workflowRunId: workflowRun.id,
+            workerId,
+            stepName: randomUUID(),
+            kind: "function",
+            config: {},
+            context: null,
+          }),
+        ).rejects.toThrow("Failed to create step attempt");
+
+        const attempts = await backend.listStepAttempts({
+          workflowRunId: workflowRun.id,
+        });
+        expect(attempts.data).toHaveLength(0);
+      });
     });
 
     describe("getStepAttempt()", () => {
@@ -1787,6 +2053,14 @@ export function testBackend(options: TestBackendOptions): void {
         expect(completed.error).toBeNull();
         expect(completed.finishedAt).not.toBeNull();
 
+        const completedAgain = await backend.completeStepAttempt({
+          workflowRunId: claimed.id,
+          stepAttemptId: created.id,
+          workerId: claimed.workerId!, // eslint-disable-line @typescript-eslint/no-non-null-assertion
+          output,
+        });
+        expect(completedAgain).toEqual(completed);
+
         const fetched = await backend.getStepAttempt({
           stepAttemptId: created.id,
         });
@@ -1878,6 +2152,14 @@ export function testBackend(options: TestBackendOptions): void {
         expect(failed.error).toEqual(error);
         expect(failed.output).toBeNull();
         expect(failed.finishedAt).not.toBeNull();
+
+        const failedAgain = await backend.failStepAttempt({
+          workflowRunId: claimed.id,
+          stepAttemptId: created.id,
+          workerId: claimed.workerId!, // eslint-disable-line @typescript-eslint/no-non-null-assertion
+          error,
+        });
+        expect(failedAgain).toEqual(failed);
 
         const fetched = await backend.getStepAttempt({
           stepAttemptId: created.id,
@@ -2627,6 +2909,31 @@ async function createClaimedWorkflowRun(b: Backend) {
 }
 
 /**
+ * Claim the next available pending run and drive it to a terminal `failed`
+ * state. Useful when a test has already created the pending run with specific
+ * fields (e.g. an explicit workflow name) and just needs it failed.
+ * @param b - Backend
+ * @returns ID of the run that was failed
+ */
+async function claimAndFailNextPendingRun(b: Backend): Promise<string> {
+  const claimed = await b.claimWorkflowRun({
+    workerId: randomUUID(),
+    leaseDurationMs: 100,
+  });
+  if (!claimed) throw new Error("Expected to claim a pending run");
+  await b.failWorkflowRun({
+    workflowRunId: claimed.id,
+    workerId: claimed.workerId!, // eslint-disable-line @typescript-eslint/no-non-null-assertion
+    error: { message: "failed run" },
+    retryPolicy: {
+      ...DEFAULT_WORKFLOW_RETRY_POLICY,
+      maximumAttempts: 1,
+    },
+  });
+  return claimed.id;
+}
+
+/**
  * Get delta in seconds from now.
  * @param date - Date to compare
  * @returns Delta in seconds
@@ -2634,6 +2941,19 @@ async function createClaimedWorkflowRun(b: Backend) {
 function deltaSeconds(date: Date | null | undefined): number {
   if (!date) return Infinity;
   return Math.abs((Date.now() - date.getTime()) / 1000);
+}
+
+/**
+ * Wait until a timestamp has passed with a small scheduler buffer.
+ * @param date - Timestamp to wait past
+ */
+async function sleepUntilAfter(date: Date | null | undefined): Promise<void> {
+  if (!date) throw new Error("Expected lease expiration timestamp");
+
+  const delayMs = date.getTime() - Date.now() + 50;
+  if (delayMs > 0) {
+    await sleep(delayMs);
+  }
 }
 
 /**
