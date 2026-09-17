@@ -39,11 +39,11 @@
     "pocketbase": "^0.28.1"
   },
   "peerDependencies": {
-    "openworkflow": "^0.10.0"
+    "openworkflow": "^0.10.1"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",
-    "openworkflow": "^0.10.0",
+    "openworkflow": "^0.10.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   }
