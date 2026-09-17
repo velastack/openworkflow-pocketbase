@@ -1,7 +1,7 @@
 {
   "name": "openworkflow-pocketbase",
-  "version": "0.1.0",
-  "description": "OpenWorkflow Backend backed by a velabase /api/ow/v1 HTTP API — a thin wrapper over the pocketbase-sveltekit client.",
+  "version": "0.1.1",
+  "description": "OpenWorkflow Backend backed by a velabase /api/ow/v1 HTTP API, driven by a superuser-authed PocketBase JS SDK client.",
   "keywords": [
     "openworkflow",
     "pocketbase",
@@ -35,14 +35,15 @@
     "test:watch": "vitest",
     "prepublishOnly": "npm run clean && npm run build"
   },
-  "peerDependencies": {
-    "openworkflow": "^0.10.0",
+  "dependencies": {
     "pocketbase": "^0.28.1"
+  },
+  "peerDependencies": {
+    "openworkflow": "^0.10.0"
   },
   "devDependencies": {
     "@types/node": "^26.5.0",
     "openworkflow": "^0.10.0",
-    "pocketbase": "^0.28.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   }

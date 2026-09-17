@@ -40,8 +40,8 @@ export type BackendPocketBaseOptions =
 /**
  * An OpenWorkflow {@link Backend} that talks to a velabase
  * `/api/ow/v1/{namespace}` HTTP API. Each method is one authenticated
- * `pb.send()` against the matching endpoint; a superuser-authed
- * `pocketbase-sveltekit` client is effectively "the DB connection".
+ * `pb.send()` against the matching endpoint; a superuser-authed PocketBase
+ * JS SDK client is effectively "the DB connection".
  */
 export class BackendPocketBase implements Backend {
   private readonly pb: PocketBase;
