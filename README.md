@@ -82,3 +82,16 @@ release.** Only three edits vs upstream:
 2. `DEFAULT_WORKFLOW_RETRY_POLICY` inlined (it is not publicly exported);
 3. one clock-mocked test (`…older than the idempotency period`) is `.skip`ped — its
    `vi.spyOn(Date,"now")` cannot affect the remote server's clock.
+
+## Releasing
+
+Publishing is done by `.github/workflows/release.yml` via npm trusted publishing (OIDC, with
+provenance); no npm token is stored in the repo. Bump the version, then push a matching tag:
+
+```sh
+npm version patch   # or minor / major; commits and tags vX.Y.Z
+git push --follow-tags
+```
+
+The workflow refuses to publish if the tag and `package.json` version disagree, and runs the
+full conformance suite against a velabase release binary first.
