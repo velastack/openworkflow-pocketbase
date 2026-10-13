@@ -13,7 +13,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      POCKETBASE_VERSION: v0.40.4
+      POCKETBASE_VERSION: v0.40.6-beta.1
       PB_URL: http://127.0.0.1:8090
       PB_SUPERUSER_EMAIL: test@example.com
       PB_SUPERUSER_PASSWORD: openworkflow-test-pw

@@ -45,7 +45,7 @@ and re-authenticates once on a `401`.
 
 ## Compatibility
 
-- Targets PocketBase's OpenWorkflow plugin **schema v5**.
+- Targets PocketBase's OpenWorkflow plugin **schema v7** (`pocketbase-openworkflow` v0.2.0+, velabase v0.40.6-beta.1+).
 
 ## Development & tests
 
