@@ -7,6 +7,7 @@ import type {
   CompleteWorkflowRunParams,
   CreateStepAttemptParams,
   CreateWorkflowRunParams,
+  EnqueueScheduledRunsParams,
   ExtendWorkflowRunLeaseParams,
   FailStepAttemptParams,
   FailWorkflowRunParams,
@@ -16,6 +17,8 @@ import type {
   ListStepAttemptsParams,
   ListWorkflowRunsParams,
   PaginatedResponse,
+  PaginationOptions,
+  RerunWorkflowRunParams,
   RescheduleWorkflowRunAfterFailedStepAttemptParams,
   SendSignalParams,
   SendSignalResult,
@@ -24,8 +27,16 @@ import type {
   StepAttempt,
   WorkflowRun,
   WorkflowRunCounts,
+  WorkflowScheduleDefinition,
+  WorkflowScheduleIdParams,
 } from "openworkflow/internal";
-import { reviveRun, reviveStep, revivePaginated } from "./revive.js";
+import type { WorkflowSchedule } from "openworkflow";
+import {
+  reviveRun,
+  reviveSchedule,
+  reviveStep,
+  revivePaginated,
+} from "./revive.js";
 
 /** Matches the server's `DEFAULT_NAMESPACE_ID`. */
 const DEFAULT_NAMESPACE_ID = "default";
@@ -109,6 +120,74 @@ export class BackendPocketBase implements Backend {
     }
   }
 
+  // --- recurring schedules ---
+
+  async upsertWorkflowSchedule(
+    params: Readonly<WorkflowScheduleDefinition>,
+  ): Promise<WorkflowSchedule> {
+    const res = await this.send<{ schedule: any }>("/schedules", "POST", {
+      id: params.id,
+      workflowName: params.workflowName,
+      input: params.input,
+      cron: params.cron,
+      timezone: params.timezone,
+    });
+    return reviveSchedule(res.schedule);
+  }
+
+  async getWorkflowSchedule(
+    params: Readonly<WorkflowScheduleIdParams>,
+  ): Promise<WorkflowSchedule | null> {
+    const res = await this.send<{ schedule: any | null }>(
+      `/schedules/${encodeURIComponent(params.workflowScheduleId)}`,
+      "GET",
+    );
+    return res.schedule ? reviveSchedule(res.schedule) : null;
+  }
+
+  async listWorkflowSchedules(
+    params: Readonly<PaginationOptions>,
+  ): Promise<PaginatedResponse<WorkflowSchedule>> {
+    const res = await this.send<{ data?: unknown[]; pagination?: any }>(
+      "/schedules",
+      "GET",
+      undefined,
+      listQuery(params),
+    );
+    return revivePaginated(res, reviveSchedule);
+  }
+
+  async pauseWorkflowSchedule(
+    params: Readonly<WorkflowScheduleIdParams & { paused: boolean }>,
+  ): Promise<WorkflowSchedule> {
+    const res = await this.send<{ schedule: any }>(
+      `/schedules/${encodeURIComponent(params.workflowScheduleId)}/pause`,
+      "POST",
+      { paused: params.paused },
+    );
+    return reviveSchedule(res.schedule);
+  }
+
+  async deleteWorkflowSchedule(
+    params: Readonly<WorkflowScheduleIdParams>,
+  ): Promise<void> {
+    await this.send<unknown>(
+      `/schedules/${encodeURIComponent(params.workflowScheduleId)}`,
+      "DELETE",
+    );
+  }
+
+  async enqueueScheduledRuns(
+    params: Readonly<EnqueueScheduledRunsParams>,
+  ): Promise<number> {
+    const res = await this.send<{ count: number }>(
+      "/schedules/enqueue",
+      "POST",
+      { before: params.before, limit: params.limit },
+    );
+    return res.count;
+  }
+
   // --- workflow runs ---
 
   async createWorkflowRun(
@@ -126,6 +205,17 @@ export class BackendPocketBase implements Backend {
       availableAt: params.availableAt,
       deadlineAt: params.deadlineAt,
     });
+    return reviveRun(res.run);
+  }
+
+  async rerunWorkflowRun(
+    params: Readonly<RerunWorkflowRunParams>,
+  ): Promise<WorkflowRun> {
+    const res = await this.send<{ run: any }>(
+      `/runs/${params.workflowRunId}/rerun`,
+      "POST",
+      { fromStep: params.fromStep, context: params.context },
+    );
     return reviveRun(res.run);
   }
 
@@ -256,6 +346,7 @@ export class BackendPocketBase implements Backend {
       {
         workerId: params.workerId,
         stepName: params.stepName,
+        stepIndex: params.stepIndex,
         kind: params.kind,
         config: params.config,
         context: params.context,

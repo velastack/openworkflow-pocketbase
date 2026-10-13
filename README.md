@@ -8,7 +8,7 @@ An [OpenWorkflow](https://openworkflow.dev) backend implementation for [PocketBa
 npm install openworkflow-pocketbase openworkflow
 ```
 
-`openworkflow` is a peer dependency (ESM-only, Node ≥ 20). The PocketBase JS SDK is a regular
+`openworkflow` is a peer dependency (ESM-only, Node ≥ 22.22). The PocketBase JS SDK is a regular
 dependency, so an app that only has `pocketbase-sveltekit` installed needs nothing else.
 
 ## Usage

@@ -1,15 +1,19 @@
 // VENDORED from openworkflow/packages/openworkflow/testing/backend.testsuite.ts
 // (pinned to schema v5). Edits vs upstream — keep minimal, re-sync per OW release:
-//   1. imports rewritten to the public `openworkflow/internal` surface;
+//   1. imports rewritten to the public `openworkflow` / `openworkflow/internal`
+//      surface (the sibling schedules suite is vendored as
+//      `./schedules.testsuite.vendored.js`);
 //   2. DEFAULT_WORKFLOW_RETRY_POLICY inlined (it is NOT publicly exported);
 //   3. the clock-mocked idempotency-expiry test is `.skip`ped — its
 //      vi.spyOn(Date,"now") cannot affect the remote velabase server's clock.
+import { OpenWorkflow } from "openworkflow";
 import {
   DEFAULT_RUN_IDEMPOTENCY_PERIOD_MS,
   type Backend,
   type StepAttempt,
   type WorkflowRun,
 } from "openworkflow/internal";
+import { testWorkflowSchedules } from "./schedules.testsuite.vendored.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 
@@ -40,6 +44,7 @@ export interface TestBackendOptions {
  * @param options - Test suite options
  */
 export function testBackend(options: TestBackendOptions): void {
+  testWorkflowSchedules(options);
   const { setup, teardown } = options;
   const RESCHEDULING_RETRY_POLICY = {
     ...DEFAULT_WORKFLOW_RETRY_POLICY,
@@ -60,6 +65,7 @@ export function testBackend(options: TestBackendOptions): void {
     describe("createWorkflowRun()", () => {
       test("creates a workflow run", async () => {
         const expected: WorkflowRun = {
+          workflowScheduleId: null,
           namespaceId: "", // -
           id: "", // -
           workflowName: randomUUID(),
@@ -140,8 +146,9 @@ export function testBackend(options: TestBackendOptions): void {
           context: null,
           availableAt: null,
           deadlineAt: null,
-        } as unknown as Parameters<Backend["createWorkflowRun"]>[0];
+        };
 
+        // @ts-expect-error legacy callers omit the parent linkage fields
         const created = await backend.createWorkflowRun(legacyParams);
 
         expect(created.parentStepAttemptNamespaceId).toBeNull();
@@ -1674,6 +1681,7 @@ export function testBackend(options: TestBackendOptions): void {
           id: "", // -
           workflowRunId: workflowRun.id,
           stepName: randomUUID(),
+          stepIndex: 0,
           kind: "function",
           status: "running",
           config: { key: "val" },
@@ -1692,6 +1700,7 @@ export function testBackend(options: TestBackendOptions): void {
           workflowRunId: expected.workflowRunId,
           workerId: workflowRun.workerId!, // oxlint-disable-line typescript/no-non-null-assertion
           stepName: expected.stepName,
+          stepIndex: expected.stepIndex,
           kind: expected.kind,
           config: expected.config,
           context: expected.context,
@@ -1773,6 +1782,7 @@ export function testBackend(options: TestBackendOptions): void {
         const got = await backend.getStepAttempt({
           stepAttemptId: created.id,
         });
+        expect(got?.stepIndex).toBeNull();
         expect(got).toEqual(created);
       });
     });
@@ -2596,6 +2606,82 @@ export function testBackend(options: TestBackendOptions): void {
         expect(result.workflowRunIds).toEqual([]);
       });
 
+      test.each([false, true])(
+        "excludes canceled waiters with an active waiter present: %s",
+        async (includeActiveWaiter) => {
+          const isolatedBackend = await setup();
+          const client = new OpenWorkflow({ backend: isolatedBackend });
+          const signal = `canceled-waiter-${randomUUID()}`;
+          const workflow = client.defineWorkflow(
+            { name: "signal-waiter" },
+            async ({ step }) =>
+              await step.waitForSignal({ signal, timeout: "1h" }),
+          );
+          const worker = client.newWorker({ concurrency: 2 });
+
+          try {
+            const canceledHandle = await workflow.run();
+            const activeHandle = includeActiveWaiter
+              ? await workflow.run()
+              : null;
+
+            await worker.tick();
+            await worker.stop();
+
+            for (const handle of [canceledHandle, activeHandle]) {
+              if (!handle) continue;
+              await expect(
+                isolatedBackend.getWorkflowRun({
+                  workflowRunId: handle.workflowRun.id,
+                }),
+              ).resolves.toMatchObject({ status: "running", workerId: null });
+            }
+
+            const steps = await isolatedBackend.listStepAttempts({
+              workflowRunId: canceledHandle.workflowRun.id,
+            });
+            const waitStep = steps.data.find(
+              (attempt) => attempt.kind === "signal-wait",
+            );
+            if (!waitStep) throw new Error("Expected a persisted signal wait");
+
+            await canceledHandle.cancel();
+            const result = await client.sendSignal({
+              signal,
+              data: { approved: true },
+            });
+
+            expect(result.workflowRunIds).toEqual(
+              activeHandle ? [activeHandle.workflowRun.id] : [],
+            );
+            await expect(
+              isolatedBackend.getSignalDelivery({ stepAttemptId: waitStep.id }),
+            ).resolves.toBeUndefined();
+
+            await worker.tick();
+            await worker.stop();
+
+            if (activeHandle) {
+              await expect(activeHandle.result()).resolves.toEqual({
+                data: { approved: true },
+              });
+            }
+            await expect(
+              isolatedBackend.getWorkflowRun({
+                workflowRunId: canceledHandle.workflowRun.id,
+              }),
+            ).resolves.toMatchObject({
+              status: "canceled",
+              workerId: null,
+              availableAt: null,
+            });
+          } finally {
+            await worker.stop();
+            await teardown(isolatedBackend);
+          }
+        },
+      );
+
       test("delivers to one active waiter and wakes run", async () => {
         const run = await createClaimedWorkflowRun(backend);
         const signalString = `test-signal-${randomUUID()}`;
@@ -2682,7 +2768,7 @@ export function testBackend(options: TestBackendOptions): void {
         }
       });
 
-      test("idempotent send returns same result", async () => {
+      test("idempotent send returns same result after recipient cancellation", async () => {
         const run = await createClaimedWorkflowRun(backend);
         const signalString = `idempotent-${randomUUID()}`;
         const idempotencyKey = randomUUID();
@@ -2710,6 +2796,9 @@ export function testBackend(options: TestBackendOptions): void {
           data: { val: 1 },
           idempotencyKey,
         });
+
+        expect(first.workflowRunIds).toEqual([run.id]);
+        await backend.cancelWorkflowRun({ workflowRunId: run.id });
 
         const second = await backend.sendSignal({
           signal: signalString,
