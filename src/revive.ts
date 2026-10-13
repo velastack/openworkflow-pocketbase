@@ -1,3 +1,4 @@
+import type { WorkflowSchedule } from "openworkflow";
 import type {
   PaginatedResponse,
   StepAttempt,
@@ -39,6 +40,19 @@ export function reviveStep(s: any): StepAttempt {
     ...s,
     startedAt: d(s.startedAt),
     finishedAt: d(s.finishedAt),
+    createdAt: new Date(s.createdAt),
+    updatedAt: new Date(s.updatedAt),
+  };
+}
+
+/**
+ * Revive a wire recurring schedule into the domain {@link WorkflowSchedule}.
+ * `nextRunAt` is null while the schedule is paused.
+ */
+export function reviveSchedule(s: any): WorkflowSchedule {
+  return {
+    ...s,
+    nextRunAt: d(s.nextRunAt),
     createdAt: new Date(s.createdAt),
     updatedAt: new Date(s.updatedAt),
   };

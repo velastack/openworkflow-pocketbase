@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+  id-token: write # required for npm provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      POCKETBASE_VERSION: v0.40.6-beta.1
+      PB_URL: http://127.0.0.1:8090
+      PB_SUPERUSER_EMAIL: test@example.com
+      PB_SUPERUSER_PASSWORD: openworkflow-test-pw
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # Node 24 ships npm 11.x, required for OIDC trusted publishing (>= 11.5.1).
+          node-version: 24
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $TAG_VERSION does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      # The conformance suite needs a live velabase; boot the same release binary CI uses.
+      - name: Download pocketbase release binary
+        run: |
+          ver="${POCKETBASE_VERSION#v}"
+          curl -fL -o pocketbase.zip \
+            "https://github.com/velastack/velabase/releases/download/${POCKETBASE_VERSION}/pocketbase_${ver}_linux_amd64.zip"
+          unzip -o pocketbase.zip pocketbase
+          chmod +x pocketbase
+
+      - name: Seed superuser and serve pocketbase
+        run: |
+          ./pocketbase superuser upsert "$PB_SUPERUSER_EMAIL" "$PB_SUPERUSER_PASSWORD" --dir ./pb_data
+          ./pocketbase serve --dir ./pb_data --http 127.0.0.1:8090 &
+          for i in $(seq 1 30); do
+            curl -sf "$PB_URL/api/health" >/dev/null && { echo "pocketbase healthy"; break; }
+            sleep 1
+          done
+
+      - run: npm run build
+      - run: npm test
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance

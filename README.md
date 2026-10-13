@@ -8,7 +8,7 @@ An [OpenWorkflow](https://openworkflow.dev) backend implementation for [PocketBa
 npm install openworkflow-pocketbase openworkflow
 ```
 
-`openworkflow` is a peer dependency (ESM-only, Node ≥ 20). The PocketBase JS SDK is a regular
+`openworkflow` is a peer dependency (ESM-only, Node ≥ 22.22). The PocketBase JS SDK is a regular
 dependency, so an app that only has `pocketbase-sveltekit` installed needs nothing else.
 
 ## Usage
@@ -45,7 +45,7 @@ and re-authenticates once on a `401`.
 
 ## Compatibility
 
-- Targets PocketBase's OpenWorkflow plugin **schema v5**.
+- Targets PocketBase's OpenWorkflow plugin **schema v7** (`pocketbase-openworkflow` v0.2.0+, velabase v0.40.6-beta.1+).
 
 ## Development & tests
 
@@ -82,3 +82,16 @@ release.** Only three edits vs upstream:
 2. `DEFAULT_WORKFLOW_RETRY_POLICY` inlined (it is not publicly exported);
 3. one clock-mocked test (`…older than the idempotency period`) is `.skip`ped — its
    `vi.spyOn(Date,"now")` cannot affect the remote server's clock.
+
+## Releasing
+
+Publishing is done by `.github/workflows/release.yml` via npm trusted publishing (OIDC, with
+provenance); no npm token is stored in the repo. Bump the version, then push a matching tag:
+
+```sh
+npm version patch   # or minor / major; commits and tags vX.Y.Z
+git push --follow-tags
+```
+
+The workflow refuses to publish if the tag and `package.json` version disagree, and runs the
+full conformance suite against a velabase release binary first.
