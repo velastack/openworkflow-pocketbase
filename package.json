@@ -1,6 +1,6 @@
 {
   "name": "openworkflow-pocketbase",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "OpenWorkflow Backend backed by a velabase /api/ow/v1 HTTP API, driven by a superuser-authed PocketBase JS SDK client.",
   "keywords": [
     "openworkflow",
