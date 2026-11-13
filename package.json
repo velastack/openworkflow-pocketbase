@@ -36,7 +36,7 @@
     "prepublishOnly": "npm run clean && npm run build"
   },
   "dependencies": {
-    "pocketbase": "^0.28.1"
+    "pocketbase": "^0.29.0"
   },
   "peerDependencies": {
     "openworkflow": "^0.11.0"
